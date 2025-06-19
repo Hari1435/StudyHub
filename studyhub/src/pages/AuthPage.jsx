@@ -9,7 +9,8 @@ import {
   ArrowLeft,
   User,
   BookOpen,
-  ChevronRight
+  ChevronRight,
+  Loader2
 } from 'lucide-react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -34,6 +35,7 @@ const AuthPage = ({ onBack }) => {
   const [pendingUserId, setPendingUserId] = useState('');
   const [pendingFacultyId, setPendingFacultyId] = useState('');
   const [loginRole, setLoginRole] = useState('student');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
   const handleInputChange = (e) => {
@@ -50,6 +52,7 @@ const AuthPage = ({ onBack }) => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setLoading(true);
     if (userRole === 'student' && authMode === 'signup') {
       try {
         const res = await axios.post(`${import.meta.env.VITE_API_URL}/signup`, {
@@ -67,6 +70,7 @@ const AuthPage = ({ onBack }) => {
       } catch (err) {
         console.error('Student registration error:', err.response?.data || err.message);
       }
+      setLoading(false);
       return;
     }
     if (userRole === 'teacher' && authMode === 'signup') {
@@ -86,6 +90,7 @@ const AuthPage = ({ onBack }) => {
       } catch (err) {
         console.error('Faculty registration error:', err.response?.data || err.message);
       }
+      setLoading(false);
       return;
     }
     if (authMode === 'login') {
@@ -105,22 +110,24 @@ const AuthPage = ({ onBack }) => {
           if (res.data.token) {
             localStorage.setItem('facultyToken', res.data.token);
           }
-          navigate('/fadashboard', {
+          navigate('/FaDashboard', {
             state: {
               facultyName: `${firstName || ''} ${lastName || ''}`.trim(),
               employeeId: employeeId || '',
             },
           });
         } else {
-          navigate('/studashboard');
+          navigate('/StuDashboard');
         }
       } catch (err) {
         console.error('Login error:', err.response?.data || err.message);
       }
+      setLoading(false);
       return;
     }
     // Handle other cases (teacher, login, etc.)
     console.log('Form submitted:', { ...formData, role: userRole, mode: authMode });
+    setLoading(false);
   };
 
   const resetToRoleSelect = () => {
@@ -507,8 +514,16 @@ const AuthPage = ({ onBack }) => {
               type="submit"
               className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 focus:ring-4 focus:ring-blue-200 transition-all duration-200"
               style={{ display: 'block', fontSize: '1.1rem', marginTop: '1rem' }}
+              disabled={loading}
             >
-              {authMode === 'login' ? 'Sign In' : 'Create Account'}
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <Loader2 className="animate-spin h-5 w-5" />
+                  Loading...
+                </span>
+              ) : (
+                authMode === 'login' ? 'Sign In' : 'Create Account'
+              )}
             </button>
           </form>
 
