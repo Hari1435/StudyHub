@@ -9,8 +9,8 @@ function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="authenticate" element={<AuthPage/>}/>
-        <Route path="FaDashboard" element={<FaDashboard />} />
-        <Route path="StuDashboard" element={<StuDashboard />} />
+        <Route path="fadashboard" element={<FaDashboard />} />
+        <Route path="studashboard" element={<StuDashboard />} />
       </Routes>
     </BrowserRouter>
   );

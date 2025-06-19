@@ -105,14 +105,14 @@ const AuthPage = ({ onBack }) => {
           if (res.data.token) {
             localStorage.setItem('facultyToken', res.data.token);
           }
-          navigate('/FaDashboard', {
+          navigate('/fadashboard', {
             state: {
               facultyName: `${firstName || ''} ${lastName || ''}`.trim(),
               employeeId: employeeId || '',
             },
           });
         } else {
-          navigate('/StuDashboard');
+          navigate('/studashboard');
         }
       } catch (err) {
         console.error('Login error:', err.response?.data || err.message);
