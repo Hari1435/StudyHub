@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
-import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/build/pdf';
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
 const LINKEDIN_BLUE = 'bg-[#0A66C2]';
