@@ -54,7 +54,7 @@ const StuDashboard = ({ onLogout }) => {
   useEffect(() => {
     const fetchAllMaterials = async () => {
       try {
-        const res = await axios.get('http://localhost:5000/api/faculty/all-materials');
+        const res = await axios.get(`${import.meta.env.VITE_API_URL_fact}/api/faculty/all-materials`);
         setMaterials((res.data.materials || []).filter(m => m.fileUrl));
       } catch (error) {
         setMaterials([]);
