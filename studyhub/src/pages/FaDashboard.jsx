@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Upload,
   FileText,
@@ -16,7 +16,6 @@ import {
   Users,
   BookOpen,
   GraduationCap,
-  LogOut,
   Settings,
   Bell,
   X,
@@ -26,6 +25,8 @@ import {
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
+import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist/build/pdf';
+GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
 
 const LINKEDIN_BLUE = 'bg-[#0A66C2]';
 const LINKEDIN_ACCENT = 'bg-[#004182]';
@@ -54,6 +55,64 @@ const FaDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { facultyName = 'Faculty', employeeId = 'N/A' } = location.state || {};
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileMenuRef = useRef(null);
+
+  const facultyProfile = JSON.parse(localStorage.getItem('facultyProfile') || '{}');
+  const displayName = facultyProfile.firstName && facultyProfile.lastName ? `${facultyProfile.firstName} ${facultyProfile.lastName}` : facultyName;
+  const displayEmail = facultyProfile.email || '';
+  const displayRole = 'Faculty';
+  const displayEmployeeId = facultyProfile.employeeId || employeeId;
+
+  useEffect(() => {
+    const fetchFacultyMaterials = async () => {
+      try {
+        let facultyId = (location.state && location.state.employeeId);
+        if (!facultyId) {
+          const facultyProfile = JSON.parse(localStorage.getItem('facultyProfile') || '{}');
+          facultyId = facultyProfile.employeeId;
+        }
+        if (!facultyId) return;
+        const token = localStorage.getItem('facultyToken');
+        const res = await axios.get(`${import.meta.env.VITE_API_URL_fact}/materials?employeeId=${facultyId}`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        setMaterials((res.data.materials || []).filter(m => m.fileUrl));
+      } catch (error) {
+        setMaterials([]);
+      }
+    };
+    fetchFacultyMaterials();
+  }, [location]);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+        setShowProfileMenu(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem('facultyToken');
+    localStorage.removeItem('facultyProfile');
+    navigate('/');
+  };
+
+  const handleDeleteMaterial = async (materialId, index) => {
+    if (!window.confirm('Are you sure you want to delete this material?')) return;
+    try {
+      const token = localStorage.getItem('facultyToken');
+      await axios.delete(`${import.meta.env.VITE_API_URL_fact}/materials/${materialId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      setMaterials(prev => prev.filter((_, i) => i !== index));
+    } catch (error) {
+      alert('Failed to delete material: ' + (error.response?.data?.message || error.message));
+    }
+  };
 
   const getFileIcon = (type) => {
     switch (type) {
@@ -100,14 +159,20 @@ const FaDashboard = () => {
     setDragActive(false);
     if (e.dataTransfer.files && e.dataTransfer.files[0]) {
       const files = Array.from(e.dataTransfer.files);
-      setUploadForm(prev => ({ ...prev, files: [...prev.files, ...files] }));
+      setUploadForm(prev => {
+        const newFiles = [...prev.files, ...files];
+        return { ...prev, files: newFiles };
+      });
     }
   };
 
   const handleFileSelect = (e) => {
     if (e.target.files) {
       const files = Array.from(e.target.files);
-      setUploadForm(prev => ({ ...prev, files: [...prev.files, ...files] }));
+      setUploadForm(prev => {
+        const newFiles = [...prev.files, ...files];
+        return { ...prev, files: newFiles };
+      });
     }
   };
 
@@ -125,13 +190,14 @@ const FaDashboard = () => {
     try {
       if (!uploadForm.files.length) return;
       const formData = new FormData();
-      formData.append('file', uploadForm.files[0]);
+      formData.append('file', uploadForm.files[0]); // Assuming single file upload for now
       formData.append('title', uploadForm.title);
       formData.append('subject', uploadForm.subject);
       formData.append('description', uploadForm.description);
       formData.append('courseCode', uploadForm.course);
       formData.append('tags', uploadForm.tags);
-      formData.append('employeeId', employeeId);
+      const facultyProfile = JSON.parse(localStorage.getItem('facultyProfile') || '{}');
+      formData.append('employeeId', facultyProfile.employeeId);
 
       const token = localStorage.getItem('facultyToken');
       const res = await axios.post(
@@ -148,14 +214,18 @@ const FaDashboard = () => {
           },
         }
       );
-      // Add to recents
       setMaterials(prev => [
         {
+          _id: res.data.material._id,
           name: uploadForm.files[0].name,
           uploadedAt: new Date(),
           url: res.data.material.fileUrl || '',
           title: uploadForm.title,
           subject: uploadForm.subject,
+          description: uploadForm.description,
+          courseCode: uploadForm.course,
+          tags: uploadForm.tags,
+          originalFileName: res.data.material.originalFileName
         },
         ...prev,
       ]);
@@ -176,6 +246,46 @@ const FaDashboard = () => {
     }
   };
 
+  const getFilePreview = (file) => {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      const type = file.type.split('/')[0];
+      if (type === 'image') {
+        reader.onload = (e) => resolve({ type: 'image', src: e.target.result });
+        reader.readAsDataURL(file);
+      } else if (type === 'application' && file.type === 'application/pdf') {
+        const url = URL.createObjectURL(file);
+        getDocument(url).promise.then((pdf) => {
+          pdf.getPage(1).then((page) => {
+            const viewport = page.getViewport({ scale: 0.5 });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+            page.render({ canvasContext: context, viewport }).promise.then(() => {
+              resolve({ type: 'pdf', src: canvas.toDataURL() });
+            });
+          });
+        }).catch(() => resolve({ type: 'unknown', src: null }));
+      } else if (type === 'text') {
+        reader.onload = (e) => resolve({ type: 'text', src: e.target.result });
+        reader.readAsText(file);
+      } else {
+        resolve({ type: 'unknown', src: null });
+      }
+    });
+  };
+
+  const [filePreviews, setFilePreviews] = useState([]);
+
+  useEffect(() => {
+    const generatePreviews = async () => {
+      const previews = await Promise.all(uploadForm.files.map(file => getFilePreview(file)));
+      setFilePreviews(previews);
+    };
+    generatePreviews();
+  }, [uploadForm.files]);
+
   const filteredMaterials = materials.filter(material => {
     const matchesSearch = material.title?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       material.description?.toLowerCase().includes(searchTerm.toLowerCase());
@@ -183,9 +293,10 @@ const FaDashboard = () => {
     return matchesSearch && matchesSubject;
   });
 
-  const handleLogout = () => {
-    navigate('/authenticate');
-  };
+  const now = new Date();
+  const recentMaterials = materials.filter(
+    (m) => m.uploadedAt && (now - new Date(m.uploadedAt)) < 24 * 60 * 60 * 1000
+  );
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -198,28 +309,28 @@ const FaDashboard = () => {
               <span className="ml-2 text-xl font-bold text-gray-900">Study Hub</span>
               <span className="ml-2 text-sm text-gray-500">Faculty Portal</span>
             </div>
-            <div className="flex items-center space-x-4">
-              <button className="p-2 text-gray-400 hover:text-[#0A66C2] relative">
-                <Bell className="h-6 w-6" />
-              </button>
-              <button className="p-2 text-gray-400 hover:text-[#0A66C2]">
-                <Settings className="h-6 w-6" />
-              </button>
-              <div className="flex items-center space-x-3">
-                <div className="w-8 h-8 bg-[#0A66C2] rounded-full flex items-center justify-center text-white font-semibold">
-                  {facultyName.split(' ').map(w => w[0]).join('')}
+            <div className="flex items-center">
+              <div className="relative">
+                <div className="w-10 h-10 bg-[#0A66C2] rounded-full flex items-center justify-center text-white text-2xl font-bold cursor-pointer relative shadow-md border-2 border-white hover:scale-105 transition-transform" onClick={() => setShowProfileMenu(v => !v)}>
+                  <span>F</span>
                 </div>
-                <div className="hidden md:block">
-                  <div className="text-sm font-medium text-gray-900">{facultyName}</div>
-                  <div className="text-xs text-gray-500">Employee ID: {employeeId}</div>
-                </div>
+                {showProfileMenu && (
+                  <div ref={profileMenuRef} className="absolute right-0 mt-3 w-40 bg-white rounded-xl shadow-2xl z-50 border border-gray-200 overflow-hidden animate-fade-in">
+                    <button
+                      className="w-full text-left px-6 py-3 hover:bg-gray-100 text-gray-700 text-base font-medium border-b border-gray-200"
+                      onClick={() => { setShowProfileMenu(false); navigate('/profile'); }}
+                    >
+                      Profile
+                    </button>
+                    <button
+                      className="w-full text-left px-6 py-3 hover:bg-gray-100 text-red-600 text-base font-semibold"
+                      onClick={handleLogout}
+                    >
+                      Logout
+                    </button>
+                  </div>
+                )}
               </div>
-              <button
-                onClick={handleLogout}
-                className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-              >
-                <LogOut className="h-6 w-6" />
-              </button>
             </div>
           </div>
         </div>
@@ -249,16 +360,6 @@ const FaDashboard = () => {
             >
               My Materials
             </button>
-            <button
-              onClick={() => setActiveTab('analytics')}
-              className={`py-4 px-1 border-b-2 font-medium text-sm ${
-                activeTab === 'analytics'
-                  ? 'border-[#0A66C2] text-[#0A66C2]'
-                  : 'border-transparent text-gray-500 hover:text-[#0A66C2] hover:border-[#EAF1FB]'
-              }`}
-            >
-              Analytics
-            </button>
           </nav>
         </div>
       </div>
@@ -280,26 +381,86 @@ const FaDashboard = () => {
             {/* Recent Uploads (empty state) */}
             <div className="bg-white rounded-xl shadow-sm p-6">
               <h2 className="text-lg font-semibold text-[#0A66C2] mb-4">Recent Uploads</h2>
-              {materials.length === 0 ? (
+              {recentMaterials.length === 0 ? (
                 <div className="text-gray-400 text-center py-6">No recent uploads.</div>
               ) : (
                 <ul className="divide-y divide-gray-200">
-                  {materials.map((item, idx) => (
-                    <li key={idx} className="flex items-center justify-between py-2">
-                      <span className="text-gray-700">{item.name}</span>
-                      <div className="flex items-center gap-4">
-                        <span className="text-gray-400 text-xs">{item.uploadedAt?.toLocaleString()}</span>
-                        {item.url && (
-                          <button
-                            className="p-1 text-[#0A66C2] hover:text-[#004182]"
-                            title="Download"
-                            onClick={() => window.open(item.url, '_blank')}
+                  {recentMaterials.map((item, idx) => (
+                    item.title || item.name ? (
+                      <li key={item._id || idx} className="flex items-center justify-between py-2">
+                        <div className="flex flex-col">
+                          <a
+                            href={item.fileUrl || item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-700 hover:underline font-medium"
                           >
-                            <Download className="h-5 w-5" />
-                          </button>
-                        )}
-                      </div>
-                    </li>
+                            {item.title || item.name}
+                          </a>
+                          <div className="text-xs text-gray-500">
+                            {item.description && <div><b>Description:</b> {item.description}</div>}
+                            {item.subject && <div><b>Subject:</b> {item.subject}</div>}
+                            {item.courseCode && <div><b>Course:</b> {item.courseCode}</div>}
+                            {item.tags && <div><b>Tags:</b> {item.tags}</div>}
+                            {item.originalFileName && <div><b>File Name:</b> {item.originalFileName}</div>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <span className="text-gray-400 text-xs">
+                            {item.uploadedAt ? new Date(item.uploadedAt).toLocaleString() : ''}
+                          </span>
+                          {item.fileUrl || item.url ? (
+                            <>
+                              <button
+                                className="p-1 text-[#0A66C2] hover:text-[#004182]"
+                                title="Download"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  const token = localStorage.getItem('facultyToken');
+                                  fetch(`${import.meta.env.VITE_API_URL_fact}/download/${item._id}`, {
+                                    method: 'GET',
+                                    headers: {
+                                      'Authorization': `Bearer ${token}`,
+                                    },
+                                  })
+                                    .then(response => {
+                                      if (!response.ok) {
+                                        if (response.status === 403) {
+                                          throw new Error('You are not authorized to download this file. Only the uploading faculty can download it.');
+                                        }
+                                        throw new Error('Failed to download file');
+                                      }
+                                      return response.blob();
+                                    })
+                                    .then(blob => {
+                                      const url = window.URL.createObjectURL(blob);
+                                      const a = document.createElement('a');
+                                      a.href = url;
+                                      a.download = item.originalFileName || item.name || 'file';
+                                      document.body.appendChild(a);
+                                      a.click();
+                                      a.remove();
+                                      window.URL.revokeObjectURL(url);
+                                    })
+                                    .catch(error => {
+                                      alert(error.message);
+                                    });
+                                }}
+                              >
+                                <Download className="h-5 w-5" />
+                              </button>
+                              <button
+                                className="p-1 text-red-600 hover:text-red-800"
+                                title="Delete"
+                                onClick={() => handleDeleteMaterial(item._id, idx)}
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </li>
+                    ) : null
                   ))}
                 </ul>
               )}
@@ -309,7 +470,7 @@ const FaDashboard = () => {
         {activeTab === 'materials' && (
           <div className="space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-              <h1 className="text-2xl font-bold text-white">My Materials</h1>
+              <h1 className="text-2xl font-bold text-[#0A66C2]">My Materials</h1>
               <div className="flex items-center space-x-4">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-[#0A66C2]" />
@@ -321,16 +482,6 @@ const FaDashboard = () => {
                     className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0A66C2] focus:border-transparent"
                   />
                 </div>
-                <select
-                  value={selectedSubject}
-                  onChange={(e) => setSelectedSubject(e.target.value)}
-                  className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[#0A66C2] focus:border-transparent"
-                >
-                  <option value="">All Subjects</option>
-                  {subjects.map((subject) => (
-                    <option key={subject} value={subject}>{subject}</option>
-                  ))}
-                </select>
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => setViewMode('grid')}
@@ -347,17 +498,169 @@ const FaDashboard = () => {
                 </div>
               </div>
             </div>
-            {/* Materials Grid/List (empty state) */}
-            <div className="bg-white rounded-xl shadow-sm p-6 text-center text-gray-400">
-              No materials found.
-            </div>
-          </div>
-        )}
-        {activeTab === 'analytics' && (
-          <div className="space-y-6">
-            <h1 className="text-2xl font-bold text-white">Analytics Dashboard</h1>
-            <div className="bg-white rounded-xl shadow-sm p-6 text-center text-gray-400">
-              No analytics data available.
+            {/* Materials List */}
+            <div className="bg-white rounded-xl shadow-sm p-6">
+              {filteredMaterials.length === 0 ? (
+                <div className="text-gray-400 text-center py-6">No materials found.</div>
+              ) : viewMode === 'grid' ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {filteredMaterials.map((item, idx) => (
+                    item.title || item.name ? (
+                      <div key={item._id || idx} className="border rounded-lg p-4 flex flex-col justify-between h-full bg-gray-50">
+                        <a
+                          href={item.fileUrl || item.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-700 hover:underline font-medium text-lg mb-2"
+                        >
+                          {item.title || item.name}
+                        </a>
+                        <div className="flex-1 text-sm text-gray-600 mb-2">
+                          {item.description && <div><b>Description:</b> {item.description}</div>}
+                          {item.subject && <div><b>Subject:</b> {item.subject}</div>}
+                          {item.courseCode && <div><b>Course:</b> {item.courseCode}</div>}
+                          {item.tags && <div><b>Tags:</b> {item.tags}</div>}
+                          {item.originalFileName && <div><b>File Name:</b> {item.originalFileName}</div>}
+                        </div>
+                        <div className="flex items-center justify-between mt-auto">
+                          <span className="text-gray-400 text-xs">
+                            {item.uploadedAt ? new Date(item.uploadedAt).toLocaleString() : ''}
+                          </span>
+                          {item.fileUrl || item.url ? (
+                            <div className="flex items-center gap-2">
+                              <button
+                                className="p-1 text-[#0A66C2] hover:text-[#004182]"
+                                title="Download"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  const token = localStorage.getItem('facultyToken');
+                                  fetch(`${import.meta.env.VITE_API_URL_fact}/download/${item._id}`, {
+                                    method: 'GET',
+                                    headers: {
+                                      'Authorization': `Bearer ${token}`,
+                                    },
+                                  })
+                                    .then(response => {
+                                      if (!response.ok) {
+                                        if (response.status === 403) {
+                                          throw new Error('You are not authorized to download this file. Only the uploading faculty can download it.');
+                                        }
+                                        throw new Error('Failed to download file');
+                                      }
+                                      return response.blob();
+                                    })
+                                    .then(blob => {
+                                      const url = window.URL.createObjectURL(blob);
+                                      const a = document.createElement('a');
+                                      a.href = url;
+                                      a.download = item.originalFileName || item.name || 'file';
+                                      document.body.appendChild(a);
+                                      a.click();
+                                      a.remove();
+                                      window.URL.revokeObjectURL(url);
+                                    })
+                                    .catch(error => {
+                                      alert(error.message);
+                                    });
+                                }}
+                              >
+                                <Download className="h-5 w-5" />
+                              </button>
+                              <button
+                                className="p-1 text-red-600 hover:text-red-800"
+                                title="Delete"
+                                onClick={() => handleDeleteMaterial(item._id, idx)}
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null
+                  ))}
+                </div>
+              ) : (
+                <ul className="divide-y divide-gray-200">
+                  {filteredMaterials.map((item, idx) => (
+                    item.title || item.name ? (
+                      <li key={item._id || idx} className="flex items-center justify-between py-2">
+                        <div className="flex flex-col">
+                          <a
+                            href={item.fileUrl || item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-700 hover:underline font-medium"
+                          >
+                            {item.title || item.name}
+                          </a>
+                          <div className="text-xs text-gray-500">
+                            {item.description && <div><b>Description:</b> {item.description}</div>}
+                            {item.subject && <div><b>Subject:</b> {item.subject}</div>}
+                            {item.courseCode && <div><b>Course:</b> {item.courseCode}</div>}
+                            {item.tags && <div><b>Tags:</b> {item.tags}</div>}
+                            {item.originalFileName && <div><b>File Name:</b> {item.originalFileName}</div>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-4">
+                          <span className="text-gray-400 text-xs">
+                            {item.uploadedAt ? new Date(item.uploadedAt).toLocaleString() : ''}
+                          </span>
+                          {item.fileUrl || item.url ? (
+                            <>
+                              <button
+                                className="p-1 text-[#0A66C2] hover:text-[#004182]"
+                                title="Download"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  const token = localStorage.getItem('facultyToken');
+                                  fetch(`${import.meta.env.VITE_API_URL_fact}/download/${item._id}`, {
+                                    method: 'GET',
+                                    headers: {
+                                      'Authorization': `Bearer ${token}`,
+                                    },
+                                  })
+                                    .then(response => {
+                                      if (!response.ok) {
+                                        if (response.status === 403) {
+                                          throw new Error('You are not authorized to download this file. Only the uploading faculty can download it.');
+                                        }
+                                        throw new Error('Failed to download file');
+                                      }
+                                      return response.blob();
+                                    })
+                                    .then(blob => {
+                                      const url = window.URL.createObjectURL(blob);
+                                      const a = document.createElement('a');
+                                      a.href = url;
+                                      a.download = item.originalFileName || item.name || 'file';
+                                      document.body.appendChild(a);
+                                      a.click();
+                                      a.remove();
+                                      window.URL.revokeObjectURL(url);
+                                    })
+                                    .catch(error => {
+                                      alert(error.message);
+                                    });
+                                }}
+                              >
+                                <Download className="h-5 w-5" />
+                              </button>
+                              <button
+                                className="p-1 text-red-600 hover:text-red-800"
+                                title="Delete"
+                                onClick={() => handleDeleteMaterial(item._id, idx)}
+                              >
+                                <Trash2 className="h-5 w-5" />
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
+                      </li>
+                    ) : null
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         )}
@@ -478,13 +781,26 @@ const FaDashboard = () => {
                     Choose Files
                   </label>
                 </div>
-                {/* Selected Files */}
+                {/* Selected Files with Previews */}
                 {uploadForm.files.length > 0 && (
-                  <div className="mt-4 space-y-2">
+                  <div className="mt-4 space-y-4">
                     {uploadForm.files.map((file, index) => (
                       <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                         <div className="flex items-center">
-                          <File className="h-5 w-5 text-gray-400 mr-3" />
+                          {filePreviews[index]?.type === 'image' && (
+                            <img src={filePreviews[index].src} alt={file.name} className="w-16 h-16 object-cover mr-3 rounded" />
+                          )}
+                          {filePreviews[index]?.type === 'pdf' && (
+                            <img src={filePreviews[index].src} alt={file.name} className="w-16 h-16 object-cover mr-3 rounded" />
+                          )}
+                          {filePreviews[index]?.type === 'text' && (
+                            <div className="w-16 h-16 flex items-center justify-center bg-gray-200 mr-3 rounded">
+                              <span className="text-sm text-gray-600">{filePreviews[index].src.slice(0, 20)}...</span>
+                            </div>
+                          )}
+                          {filePreviews[index]?.type === 'unknown' && (
+                            <File className="h-16 w-16 text-gray-400 mr-3" />
+                          )}
                           <div>
                             <div className="text-sm font-medium text-gray-900">{file.name}</div>
                             <div className="text-xs text-gray-500">

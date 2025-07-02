@@ -36,6 +36,7 @@ const AuthPage = ({ onBack }) => {
   const [pendingFacultyId, setPendingFacultyId] = useState('');
   const [loginRole, setLoginRole] = useState('student');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
 
   const handleInputChange = (e) => {
@@ -53,6 +54,12 @@ const AuthPage = ({ onBack }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
+    if ((authMode === 'signup') && formData.password.length < 8) {
+      setError('Password must be at least 8 characters long.');
+      setLoading(false);
+      return;
+    }
     if (userRole === 'student' && authMode === 'signup') {
       try {
         const res = await axios.post(`${import.meta.env.VITE_API_URL}/signup`, {
@@ -63,12 +70,12 @@ const AuthPage = ({ onBack }) => {
           password: formData.password,
           confirmPassword: formData.confirmPassword
         });
-        console.log('Student registration success:', res.data);
         setOtpMode(true);
         setPendingEmail(formData.email);
         setPendingUserId(res.data.userId || res.data._id || '');
       } catch (err) {
-        console.error('Student registration error:', err.response?.data || err.message);
+        const msg = err.response?.data?.message || err.message;
+        setError(msg);
       }
       setLoading(false);
       return;
@@ -83,12 +90,12 @@ const AuthPage = ({ onBack }) => {
           password: formData.password,
           confirmPassword: formData.confirmPassword
         });
-        console.log('Faculty registration success:', res.data);
         setOtpMode(true);
         setPendingEmail(formData.email);
         setPendingFacultyId(res.data.facultyId || res.data._id || '');
       } catch (err) {
-        console.error('Faculty registration error:', err.response?.data || err.message);
+        const msg = err.response?.data?.message || err.message;
+        setError(msg);
       }
       setLoading(false);
       return;
@@ -103,30 +110,26 @@ const AuthPage = ({ onBack }) => {
           password: formData.password,
           role: loginRole
         });
-        console.log('Login success:', res.data);
         if (loginRole === 'teacher') {
-          const { firstName, lastName, employeeId } = res.data.faculty || {};
-          // Store the token for authenticated requests
           if (res.data.token) {
             localStorage.setItem('facultyToken', res.data.token);
           }
-          navigate('/FaDashboard', {
-            state: {
-              facultyName: `${firstName || ''} ${lastName || ''}`.trim(),
-              employeeId: employeeId || '',
-            },
-          });
+          localStorage.setItem('facultyProfile', JSON.stringify(res.data.faculty));
+          navigate('/FaDashboard');
         } else {
+          if (res.data.token) {
+            localStorage.setItem('studentToken', res.data.token);
+          }
+          localStorage.setItem('studentProfile', JSON.stringify(res.data.user));
           navigate('/StuDashboard');
         }
       } catch (err) {
-        console.error('Login error:', err.response?.data || err.message);
+        const msg = err.response?.data?.message || err.message;
+        setError(msg);
       }
       setLoading(false);
       return;
     }
-    // Handle other cases (teacher, login, etc.)
-    console.log('Form submitted:', { ...formData, role: userRole, mode: authMode });
     setLoading(false);
   };
 
@@ -176,7 +179,10 @@ const AuthPage = ({ onBack }) => {
           collegeRegNumber: formData.collegeRegNumber,
           password: formData.password
         });
-        console.log('OTP verification success:', res.data);
+        if (res.data.token) {
+          localStorage.setItem('studentToken', res.data.token);
+        }
+        localStorage.setItem('studentProfile', JSON.stringify(res.data.user));
         navigate('/StuDashboard');
       } else if (userRole === 'teacher') {
         const res = await axios.post(url, {
@@ -188,7 +194,10 @@ const AuthPage = ({ onBack }) => {
           email: pendingEmail,
           password: formData.password
         });
-        console.log('OTP verification success:', res.data);
+        if (res.data.token) {
+          localStorage.setItem('facultyToken', res.data.token);
+        }
+        localStorage.setItem('facultyProfile', JSON.stringify(res.data.faculty));
         navigate('/FaDashboard');
       }
       setOtpMode(false);
@@ -480,6 +489,11 @@ const AuthPage = ({ onBack }) => {
                   {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                 </button>
               </div>
+              {authMode === 'signup' && formData.password.length > 0 && formData.password.length < 8 && (
+                <div style={{ color: 'red', fontSize: '0.95rem', marginTop: '4px' }}>
+                  Password must be at least 8 characters long.
+                </div>
+              )}
             </div>
 
             {authMode === 'signup' && (
@@ -507,6 +521,12 @@ const AuthPage = ({ onBack }) => {
                     {showConfirmPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {authMode === 'signup' && (
+              <div style={{ color: 'red', marginBottom: '8px', marginTop: '4px', textAlign: 'center' }}>
+                {error && <div>{error}</div>}
               </div>
             )}
 

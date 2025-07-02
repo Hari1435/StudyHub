@@ -4,6 +4,11 @@ const User = require('../models/User');
 const OTP = require('../models/Otp');
 const nodemailer = require('nodemailer');
 const jwt = require('jsonwebtoken');
+const Material = require('../models/Material');
+const Faculty = require('../models/Faculty');
+const path = require('path');
+const axios = require('axios');
+const mime = require('mime-types');
 require('dotenv').config();
 // Configure email transporter
 const transporter = nodemailer.createTransport({
@@ -52,6 +57,11 @@ router.post('/signup', async (req, res) => {
   }
 
   try {
+    // Cross-collection email uniqueness check
+    const facultyWithEmail = await Faculty.findOne({ email });
+    if (facultyWithEmail) {
+      return res.status(400).json({ message: 'Email already in use by a faculty member' });
+    }
     const existingUser = await User.findOne({ $or: [{ email }, { collegeRegNumber }] });
     if (existingUser) {
       return res.status(400).json({ message: 'Email or college registration number already in use' });
@@ -94,6 +104,11 @@ router.post('/verify-otp', async (req, res) => {
   }
 
   try {
+    // Cross-collection email uniqueness check
+    const facultyWithEmail = await Faculty.findOne({ email });
+    if (facultyWithEmail) {
+      return res.status(400).json({ message: 'Email already in use by a faculty member' });
+    }
     const otpRecord = await OTP.findOne({ userId, otp });
     if (!otpRecord) {
       return res.status(400).json({ message: 'Invalid or expired OTP' });
@@ -206,6 +221,61 @@ router.get('/profile', authMiddleware, async (req, res) => {
     res.status(200).json({ user });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching profile: ' + error.message });
+  }
+});
+
+// Get all materials uploaded by a faculty (for students)
+router.get('/materials-by-faculty', async (req, res) => {
+  try {
+    const { employeeId } = req.query;
+    if (!employeeId) {
+      return res.status(400).json({ message: 'employeeId is required' });
+    }
+    const materials = await Material.find({ employeeId }).sort({ uploadedAt: -1 });
+    res.status(200).json({ materials });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching materials: ' + error.message });
+  }
+});
+
+// Public download route for students
+router.get('/download/:materialId', async (req, res) => {
+  try {
+    const material = await Material.findById(req.params.materialId);
+    if (!material) {
+      return res.status(404).json({ message: 'Material not found' });
+    }
+
+    const fileUrl = material.fileUrl;
+    if (!fileUrl) {
+      return res.status(400).json({ message: 'No file associated with this material' });
+    }
+
+    // Determine the filename
+    let fileName = material.originalFileName;
+    if (!fileName) {
+      const extension = path.extname(fileUrl.split('?')[0]) || '.bin';
+      fileName = `${material.title}${extension}`;
+    }
+
+    const contentType = mime.lookup(fileName) || 'application/octet-stream';
+
+    // Fetch the file from Cloudinary
+    const response = await axios({
+      url: fileUrl,
+      method: 'GET',
+      responseType: 'stream',
+    });
+
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': `attachment; filename="${encodeURIComponent(fileName)}"`,
+    });
+
+    response.data.pipe(res);
+  } catch (error) {
+    console.error('Error downloading file:', error.message);
+    res.status(500).json({ message: 'Error downloading file: ' + error.message });
   }
 });
 
